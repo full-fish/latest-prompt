@@ -15,17 +15,43 @@ const ROWS = ['UserMessage', 'AssistantMessage', 'ToolUse', 'ToolResult', 'ToolG
 type Anchor = { tool: string } | { role: 'user' | 'assistant'; text: string }
 // `at` is the row's index in $.session.messages(). Rows are drawn lazily as
 // they scroll in, so the order they are first drawn in is not the transcript's.
-type Row = { anchor: Anchor; at: number | undefined; tries: number; isOnScreen: boolean }
+// The part of the row in view as last reported (`onScreen`), null while out.
+type Extent = { first: number; last: number; of: number }
+type Row = { anchor: Anchor; at: number | undefined; tries: number; extent: Extent | null }
 type Question = { at: number; text: string }
 
 const isSameAnchor = (a: Anchor, b: Anchor) =>
   'tool' in a ? 'tool' in b && a.tool === b.tool : 'role' in b && a.role === b.role && a.text === b.text
 
+// On a scroll the engine reports the rows at the viewport's edges only, so a
+// short row that leaves in one step is never told it left. A reported row cut
+// at the top puts every earlier row above the view, one cut at the bottom every
+// later row below it; a row reported whole says nothing of the others. Rows
+// whose place is not known yet stay in `keys` to be judged once it is.
+export function settle(rows: Map<string, Row>, keys: Set<string>): void {
+  for (const key of keys) {
+    const row = rows.get(key)
+    if (row?.at === undefined) {
+      if (!row || row.tries >= 3) keys.delete(key)
+      continue
+    }
+    keys.delete(key)
+    const extent = row.extent
+    if (!extent) continue
+    for (const other of rows.values()) {
+      if (other.at === undefined) continue
+      if ((extent.first > 0 && other.at < row.at) || (extent.last < extent.of - 1 && other.at > row.at)) {
+        other.extent = null
+      }
+    }
+  }
+}
+
 // The latest question at or above the bottom row in view; undefined while no
 // row found in the transcript says it is on screen.
 export function questionInView(rows: Iterable<Row>, questions: readonly Question[]): string | undefined {
   let bottom = -1
-  for (const row of rows) if (row.isOnScreen && row.at !== undefined && row.at > bottom) bottom = row.at
+  for (const row of rows) if (row.extent && row.at !== undefined && row.at > bottom) bottom = row.at
   let found: string | undefined
   for (const question of questions) if (bottom >= 0 && question.at <= bottom) found = question.text
 
@@ -118,12 +144,8 @@ function oneLine(text: string, room: number): string {
 
 // surface → component:requestId → row, rebuilt from the redraws after a reload.
 const views = new Map<string, Map<string, Row>>()
-// On a scroll the engine reports the rows at the viewport's edges only: a short
-// row that leaves in one step is never told it left and still reads on screen.
-// So the view is judged by the rows reported since the last look (`fresh`), and
-// kept (`edges`) until a scroll reports a row on screen again.
+// surface → keys of the rows reported and not yet settled.
 const fresh = new Map<string, Set<string>>()
-const edges = new Map<string, Set<string>>()
 let questions: Question[] = []
 let fetchedAt = Number.NEGATIVE_INFINITY
 let isQueued = false
@@ -131,14 +153,6 @@ let isQueued = false
 // reads stops asking for more until the turn ends.
 const FETCH_GAP_MS = 500
 const isPending = (row: Row) => row.at === undefined && row.tries < 3
-
-function edgeRows(surface: string, rows: Map<string, Row>): Row[] {
-  const reported = [...(fresh.get(surface) ?? [])].filter(key => rows.get(key)?.isOnScreen)
-  fresh.get(surface)?.clear()
-  if (reported.length > 0) edges.set(surface, new Set(reported))
-
-  return [...(edges.get(surface) ?? [])].flatMap(key => rows.get(key) ?? [])
-}
 
 async function publish($: EngineInterface): Promise<void> {
   const all = [...views.values()].flatMap(rows => [...rows.values()])
@@ -154,7 +168,8 @@ async function publish($: EngineInterface): Promise<void> {
   }
   const found: InView = {}
   for (const [surface, rows] of views) {
-    const question = questionInView(edgeRows(surface, rows), questions)
+    settle(rows, fresh.get(surface) ?? new Set())
+    const question = questionInView(rows.values(), questions)
     if (question !== undefined) found[surface] = question
   }
   const held = await read($, inView)
@@ -193,9 +208,10 @@ export const register: Register = on => {
       if (!rows) views.set(e.surface, (rows = new Map()))
       const key = `${e.component}:${e.requestId}`
       const row = rows.get(key)
-      const isOnScreen = e.props.onScreen !== null
-      if (row && isSameAnchor(row.anchor, anchor)) row.isOnScreen = isOnScreen
-      else rows.set(key, { anchor, at: undefined, tries: 0, isOnScreen })
+      const shown = e.props.onScreen
+      const extent = shown === null ? null : { first: shown.first, last: shown.last, of: shown.of }
+      if (row && isSameAnchor(row.anchor, anchor)) row.extent = extent
+      else rows.set(key, { anchor, at: undefined, tries: 0, extent })
       let reported = fresh.get(e.surface)
       if (!reported) fresh.set(e.surface, (reported = new Set()))
       reported.add(key)
@@ -236,7 +252,6 @@ export const register: Register = on => {
     if (e.reason === 'clear' || e.reason === 'resume') {
       views.clear()
       fresh.clear()
-      edges.clear()
       questions = []
       fetchedAt = Number.NEGATIVE_INFINITY
       await update($, latest, () => null)
