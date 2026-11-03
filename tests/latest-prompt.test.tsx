@@ -54,9 +54,16 @@ test('each submitted question replaces the last; a peer message does not', async
 
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect((await ui.find({ type: 'Text', text: /one/ }))?.text).toBe('second one')
-  // No rule above the question: the band is the question alone.
-  expect(await ui.findAll({ type: 'Text' })).toHaveLength(1)
+  // The rule above it fills the band's width.
+  expect((await ui.find({ type: 'Text', text: /─/ }))?.text).toBe('─'.repeat(20))
   await ui.unmount()
+
+  // The desktop draws the rule as a line, not as cells of its UI font.
+  const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect(await desktop.find({ type: 'Svg' })).toBeDefined()
+  expect(await desktop.find({ type: 'Text', text: /─/ })).toBeUndefined()
+  expect((await desktop.find({ type: 'Text', text: /one/ }))?.text).toBe('second one')
+  await desktop.unmount()
 })
 
 test('the band shows the latest question at or above the bottom of the view', async ($, on) => {
