@@ -1,6 +1,6 @@
 {
   "name": "latest-prompt",
-  "version": "0.2.3",
+  "version": "0.2.5",
   "description": "Pins the question for the part of the session in view (the latest by default) as one line above the prompt; press it to expand",
   "types": "./types/index.d.ts"
 }

@@ -141,14 +141,19 @@ test('the band shows the latest question at or above the bottom of the view', as
   await answer('a3', 'answer three', rows(0, 2))
   expect(await shown()).toBe('three')
 
-  // Scrolled up past the third question in one step: the engine reports the new
-  // edge row alone, never that the third question and its answer left.
+  // A small scroll while the third question is in view: only the row at the top
+  // edge is reported, the end of the second answer. The question still shows.
+  await answer('a2', 'answer two', rows(3, 4))
+  expect(await shown()).toBe('three')
+
+  // Scrolled up past the third question in one step: the second answer fills the
+  // view, cut at both edges; the engine never says the third question left.
   await answer('a2', 'answer two', rows(1, 3))
   expect(await shown()).toBe('two')
 
   // Further up into the first answer: its tool row is drawn for the first time,
-  // and the first question's row is never drawn at all.
-  await tool('toolu_1', rows(1, 4))
+  // filling the view, and the first question's row is never drawn at all.
+  await tool('toolu_1', rows(1, 3))
   expect(await shown()).toBe('one')
 
   // A row reported off screen alone keeps the view where it was.
