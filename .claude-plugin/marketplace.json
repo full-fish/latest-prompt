@@ -1,0 +1,5 @@
+{
+  "name": "latest-prompt",
+  "owner": { "name": "full-fish" },
+  "plugins": [{ "name": "latest-prompt", "source": "./" }]
+}
