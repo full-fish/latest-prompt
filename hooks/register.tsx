@@ -172,9 +172,35 @@ function queue($: EngineInterface, ms: number): void {
   })
 }
 
+// TEMPORARY: what each surface reports as onScreen, written to a file to read.
+const DEBUG_DIR = 'C:/Users/pho01/AppData/Local/Temp/claude/1012a0b9812e976e/f90793bf-f7b1-4a4a-80d5-fa4b007d25d7/scratchpad'
+type Seen = { renders: number; absent: number; off: number; on: number; last: { component: string; onScreen: unknown }[] }
+const seen = new Map<string, Seen>()
+let isDumpQueued = false
+
+function dump($: EngineInterface): void {
+  if (isDumpQueued) return
+  isDumpQueued = true
+  $.clock.after(1000, () => {
+    isDumpQueued = false
+    for (const [surface, s] of seen) {
+      void $.fs.write(`${DEBUG_DIR}/latest-prompt-debug-${surface}.json`, JSON.stringify(s, null, 2)).catch(() => {})
+    }
+  })
+}
+
 export const register: Register = on => {
   // Watches each row's place in the viewport and draws it as the engine does.
   on('ui.render', { component: ROWS }, ($, e, next) => {
+    let s = seen.get(e.surface)
+    if (!s) seen.set(e.surface, (s = { renders: 0, absent: 0, off: 0, on: 0, last: [] }))
+    s.renders += 1
+    if (e.props.onScreen === undefined) s.absent += 1
+    else if (e.props.onScreen === null) s.off += 1
+    else s.on += 1
+    s.last = [...s.last, { component: e.component, onScreen: e.props.onScreen ?? String(e.props.onScreen) }].slice(-30)
+    dump($)
+
     let anchor: Anchor | undefined
     if (e.component === 'ToolUse' || e.component === 'ToolResult') {
       anchor = { tool: e.requestId }
