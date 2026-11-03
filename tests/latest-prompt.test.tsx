@@ -62,6 +62,15 @@ test('each submitted question replaces the last; a peer message does not', async
 test('the band shows the latest question at or above the bottom of the view', async ($, on) => {
   const clock = mock.clock(on)
   on('prompt.submit', (_, e) => ({ text: e.text }))
+  on('session.messages', () => ({
+    value: [
+      { role: 'user', text: 'one', toolUses: [] },
+      { role: 'assistant', text: 'answer one', toolUses: [] },
+      { role: 'assistant', text: '', toolUses: [{ tool_use_id: 'toolu_1', tool: 'Bash', input: {} }] },
+      { role: 'user', text: 'two', toolUses: [] },
+      { role: 'assistant', text: 'answer two', toolUses: [] },
+    ],
+  }))
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
 
@@ -78,18 +87,37 @@ test('the band shows the latest question at or above the bottom of the view', as
         props: { text, origin: composer, isExpanded: true, onScreen },
       })
     ).unmount()
-  const answer = async (requestId: string, onScreen: OnScreenArg) =>
+  const answer = async (requestId: string, text: string, onScreen: OnScreenArg) =>
     (
       await $.ui.mount({
         plugin: 'latest-prompt',
         surface: 'terminal',
         component: 'AssistantMessage',
         requestId,
-        props: { text: 'answer', isFirstOfReply: true, onScreen },
+        props: { text, isFirstOfReply: true, onScreen },
       })
     ).unmount()
+  const tool = async (requestId: string, onScreen: OnScreenArg) =>
+    (
+      await $.ui.mount({
+        plugin: 'latest-prompt',
+        surface: 'terminal',
+        component: 'ToolUse',
+        requestId,
+        props: {
+          tool_use_id: requestId,
+          tool: 'Bash',
+          input: {},
+          isRunning: false,
+          isErrored: false,
+          isInterrupted: false,
+          onScreen,
+        },
+      })
+    ).unmount()
+  // Past the one-second gap between transcript reads.
   const shown = async () => {
-    await clock.advance(30)
+    await clock.advance(1100)
     const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
     const text = (await ui.find({ key: 'latest-prompt' }))?.text
     await ui.unmount()
@@ -99,17 +127,19 @@ test('the band shows the latest question at or above the bottom of the view', as
   const rows = (first: number, last: number) => ({ first, last, of: 5 })
 
   await $.prompt.submit({ text: 'two', wait: false, origin: composer })
-  // At the bottom: the second question and its answer are in view.
-  await user('u1', 'one', null)
-  await answer('a1', null)
+  // After a reload at the bottom only the rows in view are drawn, newest first.
   await user('u2', 'two', rows(0, 4))
-  await answer('a2', rows(0, 2))
+  await answer('a2', 'answer two', rows(0, 2))
   expect(await shown()).toBe('two')
 
-  // Scrolled up past the second question: only the first answer is in view.
-  await answer('a2', null)
+  // Scrolled up into the first answer: its tool row is drawn for the first time,
+  // after the newer rows, and the first question's row is never drawn at all.
+  await answer('a2', 'answer two', null)
   await user('u2', 'two', null)
-  await answer('a1', rows(1, 4))
+  await tool('toolu_1', rows(1, 4))
+  expect(await shown()).toBe('one')
+
+  await answer('a1', 'answer one', rows(0, 4))
   expect(await shown()).toBe('one')
 
   // Back down until the second question shows at the bottom edge.
