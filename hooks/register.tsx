@@ -113,13 +113,27 @@ function oneLine(text: string, room: number): string {
 
 // surface → component:requestId → row, rebuilt from the redraws after a reload.
 const views = new Map<string, Map<string, Row>>()
+// On a scroll the engine reports the rows at the viewport's edges only: a short
+// row that leaves in one step is never told it left and still reads on screen.
+// So the view is judged by the rows reported since the last look (`fresh`), and
+// kept (`edges`) until a scroll reports a row on screen again.
+const fresh = new Map<string, Set<string>>()
+const edges = new Map<string, Set<string>>()
 let questions: Question[] = []
 let fetchedAt = Number.NEGATIVE_INFINITY
 let isQueued = false
-// At most one $.session.messages() read a second; a row not found in three
+// At most two $.session.messages() reads a second; a row not found in three
 // reads stops asking for more until the turn ends.
-const FETCH_GAP_MS = 1000
+const FETCH_GAP_MS = 500
 const isPending = (row: Row) => row.at === undefined && row.tries < 3
+
+function edgeRows(surface: string, rows: Map<string, Row>): Row[] {
+  const reported = [...(fresh.get(surface) ?? [])].filter(key => rows.get(key)?.isOnScreen)
+  fresh.get(surface)?.clear()
+  if (reported.length > 0) edges.set(surface, new Set(reported))
+
+  return [...(edges.get(surface) ?? [])].flatMap(key => rows.get(key) ?? [])
+}
 
 async function publish($: EngineInterface): Promise<void> {
   const all = [...views.values()].flatMap(rows => [...rows.values()])
@@ -135,7 +149,7 @@ async function publish($: EngineInterface): Promise<void> {
   }
   const found: InView = {}
   for (const [surface, rows] of views) {
-    const question = questionInView(rows.values(), questions)
+    const question = questionInView(edgeRows(surface, rows), questions)
     if (question !== undefined) found[surface] = question
   }
   const held = await read($, inView)
@@ -177,6 +191,9 @@ export const register: Register = on => {
       const isOnScreen = e.props.onScreen !== null
       if (row && isSameAnchor(row.anchor, anchor)) row.isOnScreen = isOnScreen
       else rows.set(key, { anchor, at: undefined, tries: 0, isOnScreen })
+      let reported = fresh.get(e.surface)
+      if (!reported) fresh.set(e.surface, (reported = new Set()))
+      reported.add(key)
       queue($, 30)
     }
 
@@ -213,6 +230,8 @@ export const register: Register = on => {
   on('session.end', async ($, e, next) => {
     if (e.reason === 'clear' || e.reason === 'resume') {
       views.clear()
+      fresh.clear()
+      edges.clear()
       questions = []
       fetchedAt = Number.NEGATIVE_INFINITY
       await update($, latest, () => null)

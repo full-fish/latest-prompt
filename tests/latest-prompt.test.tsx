@@ -69,6 +69,8 @@ test('the band shows the latest question at or above the bottom of the view', as
       { role: 'assistant', text: '', toolUses: [{ tool_use_id: 'toolu_1', tool: 'Bash', input: {} }] },
       { role: 'user', text: 'two', toolUses: [] },
       { role: 'assistant', text: 'answer two', toolUses: [] },
+      { role: 'user', text: 'three', toolUses: [] },
+      { role: 'assistant', text: 'answer three', toolUses: [] },
     ],
   }))
   on('ui.render', ($, e) => {
@@ -115,9 +117,9 @@ test('the band shows the latest question at or above the bottom of the view', as
         },
       })
     ).unmount()
-  // Past the one-second gap between transcript reads.
+  // Past the gap between transcript reads.
   const shown = async () => {
-    await clock.advance(1100)
+    await clock.advance(600)
     const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
     const text = (await ui.find({ key: 'latest-prompt' }))?.text
     await ui.unmount()
@@ -126,25 +128,30 @@ test('the band shows the latest question at or above the bottom of the view', as
   }
   const rows = (first: number, last: number) => ({ first, last, of: 5 })
 
-  await $.prompt.submit({ text: 'two', wait: false, origin: composer })
+  await $.prompt.submit({ text: 'three', wait: false, origin: composer })
   // After a reload at the bottom only the rows in view are drawn, newest first.
-  await user('u2', 'two', rows(0, 4))
-  await answer('a2', 'answer two', rows(0, 2))
+  await user('u3', 'three', rows(0, 4))
+  await answer('a3', 'answer three', rows(0, 2))
+  expect(await shown()).toBe('three')
+
+  // Scrolled up past the third question in one step: the engine reports the new
+  // edge row alone, never that the third question and its answer left.
+  await answer('a2', 'answer two', rows(1, 3))
   expect(await shown()).toBe('two')
 
-  // Scrolled up into the first answer: its tool row is drawn for the first time,
-  // after the newer rows, and the first question's row is never drawn at all.
-  await answer('a2', 'answer two', null)
-  await user('u2', 'two', null)
+  // Further up into the first answer: its tool row is drawn for the first time,
+  // and the first question's row is never drawn at all.
   await tool('toolu_1', rows(1, 4))
   expect(await shown()).toBe('one')
 
-  await answer('a1', 'answer one', rows(0, 4))
+  // A row reported off screen alone keeps the view where it was.
+  await answer('a2', 'answer two', null)
   expect(await shown()).toBe('one')
 
-  // Back down until the second question shows at the bottom edge.
-  await user('u2', 'two', rows(0, 0))
-  expect(await shown()).toBe('two')
+  // Back down to the bottom.
+  await user('u3', 'three', rows(0, 4))
+  await answer('a3', 'answer three', rows(0, 2))
+  expect(await shown()).toBe('three')
 })
 
 type OnScreenArg = { first: number; last: number; of: number } | null
