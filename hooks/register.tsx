@@ -61,6 +61,11 @@ export function locate(rows: Iterable<Row>, messages: readonly SessionMessage[])
 }
 // A DiffPanel action: no engine handler is mounted at the prompt to take it first.
 const TOGGLE_ACTION = 'app:cycleDiffBase'
+// Wider than any slot, so it is drawn at the slot's width; a mid grey at half
+// strength reads on light and dark themes alike.
+const RULE_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="1" viewBox="0 0 4000 1" preserveAspectRatio="none">' +
+  '<rect width="4000" height="1" fill="#808080" fill-opacity="0.5"/></svg>'
 
 // Reminders the engine attaches, and tagged rows (slash commands, their output).
 function clean(text: string): string {
@@ -248,13 +253,21 @@ export const register: Register = on => {
 
     const { Box, Button, Text } = $.ui.resolve(e)
     const open = await read($, isOpen)
+    // The terminal draws a row of box-drawing cells. The desktop counts
+    // `bodyColumns` in its code font but sets Text in its UI font, where those
+    // cells run past one line, so it gets a 1px line stretched to the slot.
+    let rule = <Text dimColor>{'─'.repeat(Math.max(0, e.props.bodyColumns))}</Text>
+    if (e.surface === 'desktop') {
+      const { Svg } = $.ui.resolve(e)
+      rule = <Svg source={RULE_SVG} alt="divider" height={1} />
+    }
 
     // A rule above sets the question apart from the transcript; the prompt's
     // own border closes it below. ~/.claude/keybindings.json binds ctrl+x
     // ctrl+a to TOGGLE_ACTION, so the chord presses this Button.
     return (
       <Box flexDirection="column">
-        <Text dimColor>{'─'.repeat(Math.max(0, e.props.bodyColumns))}</Text>
+        {rule}
         <Button
           key="latest-prompt"
           plain
